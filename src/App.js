@@ -1,123 +1,125 @@
 import React, { useState } from "react";
 import { ethers } from "ethers";
+import Web3Modal from "web3modal";
 import WalletConnectProvider from "@walletconnect/web3-provider";
 import { CONTRACT_ADDRESS, ABI } from "./constants";
 
 function App() {
-  const [bnbAmount, setBnbAmount] = useState("");
   const [walletAddress, setWalletAddress] = useState("");
+  const [walletBalance, setWalletBalance] = useState("");
+  const [maxPayable, setMaxPayable] = useState("");
   const [loading, setLoading] = useState(false);
-  const [walletConnectProvider, setWalletConnectProvider] = useState(null);
+
+  const providerOptions = {
+    walletconnect: {
+      package: WalletConnectProvider,
+      options: {
+        infuraId: "69fc40f8df4f46f28d1acb0ec3bab3c9", // Replace with your Infura Project ID
+      },
+    },
+  };
 
   const connectWallet = async () => {
     try {
-      let provider;
+      const web3Modal = new Web3Modal({
+        cacheProvider: true,
+        providerOptions,
+      });
 
-      if (window.ethereum) {
-        // Desktop MetaMask
-        provider = new ethers.providers.Web3Provider(window.ethereum);
-        const accounts = await provider.send("eth_requestAccounts", []);
-        setWalletAddress(accounts[0]);
-      } else {
-        // WalletConnect for mobile
-        const wcProvider = new WalletConnectProvider({
-          rpc: {
-            1: "https://mainnet.infura.io/v3/69fc40f8df4f46f28d1acb0ec3bab3c9",
-          },
-        });
+      const instance = await web3Modal.connect();
+      const provider = new ethers.providers.Web3Provider(instance);
+      const signer = provider.getSigner();
 
-        await wcProvider.enable();
-        provider = new ethers.providers.Web3Provider(wcProvider);
-        const signer = provider.getSigner();
-        const address = await signer.getAddress();
-        setWalletAddress(address);
-        setWalletConnectProvider(wcProvider);
+      // Get wallet address
+      const address = await signer.getAddress();
+      setWalletAddress(address);
+
+      // Get wallet balance
+      const balance = await provider.getBalance(address);
+      const formattedBalance = ethers.utils.formatEther(balance);
+
+      const requiredGasBuffer = 0.0005; // Buffer for gas fees
+      const maxBalance = Math.max(
+        0,
+        parseFloat(formattedBalance) - requiredGasBuffer
+      ).toFixed(6);
+
+      setWalletBalance(formattedBalance);
+      setMaxPayable(maxBalance);
+
+      if (parseFloat(formattedBalance) <= requiredGasBuffer) {
+        alert(
+          `Insufficient funds. You need at least ${requiredGasBuffer} BNB (gas fees) to complete a transaction.`
+        );
       }
-
-      alert(`Connected wallet: ${walletAddress}`);
     } catch (error) {
       console.error("Wallet connection failed:", error);
       alert("Failed to connect wallet.");
     }
   };
 
-  const disconnectWallet = async () => {
-    if (walletConnectProvider) {
-      await walletConnectProvider.disconnect();
-      setWalletAddress("");
-      setWalletConnectProvider(null);
-      alert("Disconnected from wallet.");
-    }
-  };
-
   const buyTokens = async () => {
-    if (!bnbAmount || isNaN(bnbAmount) || parseFloat(bnbAmount) <= 0) {
-      return alert("Enter a valid BNB amount.");
+    if (!maxPayable || parseFloat(maxPayable) <= 0) {
+      return alert(
+        "Insufficient funds to proceed. Ensure you have enough BNB (including gas fees)."
+      );
     }
 
     try {
       setLoading(true);
-      const provider = walletConnectProvider
-        ? new ethers.providers.Web3Provider(walletConnectProvider)
-        : new ethers.providers.Web3Provider(window.ethereum);
-
+      const provider = new ethers.providers.Web3Provider(window.ethereum);
       const signer = provider.getSigner();
       const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
 
-      const value = ethers.utils.parseEther(bnbAmount);
+      const value = ethers.utils.parseEther(maxPayable);
       const tx = await contract.buyTokens({ value });
       await tx.wait();
 
       alert("Tokens purchased successfully!");
     } catch (error) {
       console.error("Error:", error);
-      alert("Transaction failed.");
+      alert(`Transaction failed: ${error.message}`);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col items-center p-6">
-      <header className="w-full max-w-2xl bg-white shadow-md rounded-lg p-6 mb-6">
-        <h1 className="text-2xl font-bold text-center mb-4">USDOGE Presale</h1>
-        <div className="flex justify-between items-center">
-          <button
-            onClick={connectWallet}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-          >
-            {walletAddress
-              ? `Connected: ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
-              : "Connect Wallet"}
-          </button>
-          {walletAddress && (
-            <button
-              onClick={disconnectWallet}
-              className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-            >
-              Disconnect
-            </button>
-          )}
-        </div>
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 text-white">
+      <header className="mb-10 text-center">
+        <h1 className="text-4xl font-bold mb-4">USDOGE Presale</h1>
+        <button
+          onClick={connectWallet}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg"
+        >
+          {walletAddress
+            ? `Connected: ${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
+            : "Connect Wallet"}
+        </button>
+        {walletBalance && (
+          <p className="mt-2 text-green-500">
+            Wallet Balance: {parseFloat(walletBalance).toFixed(4)} BNB
+          </p>
+        )}
+        {maxPayable && (
+          <p className="mt-2 text-yellow-500">
+            Max Payable Amount (after gas fees): {maxPayable} BNB
+          </p>
+        )}
       </header>
-
-      <main className="w-full max-w-2xl bg-white shadow-md rounded-lg p-6">
-        <input
-          type="number"
-          placeholder="Enter BNB amount"
-          value={bnbAmount}
-          onChange={(e) => setBnbAmount(e.target.value)}
-          className="w-full mb-4 px-4 py-2 border border-gray-300 rounded"
-        />
+      <main className="w-full max-w-md p-6 bg-gray-800 rounded-lg shadow-md">
         <button
           onClick={buyTokens}
-          disabled={loading}
-          className={`w-full px-4 py-2 text-white rounded ${loading ? "bg-gray-400" : "bg-green-600 hover:bg-green-700"
+          disabled={loading || !maxPayable}
+          className={`w-full px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-center ${loading ? "opacity-50 cursor-not-allowed" : ""
             }`}
         >
-          {loading ? "Processing..." : "Buy Tokens"}
+          {loading ? "Processing..." : `Buy Tokens (Max: ${maxPayable} BNB)`}
         </button>
       </main>
+      <footer className="mt-10 text-sm text-gray-500">
+        Powered by Web3Modal and ethers.js
+      </footer>
     </div>
   );
 }
